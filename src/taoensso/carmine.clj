@@ -26,6 +26,10 @@
 
 (encore/defalias with-replies protocol/with-replies)
 
+(def ^:dynamic *wcar-connection*
+  "Implementation detail of wcar."
+  nil)
+
 (defmacro wcar
   "Evaluates body in the context of a fresh thread-bound pooled connection to
   Redis server. Sends Redis commands to server as pipeline and returns the
@@ -49,31 +53,35 @@
   ;; [conn-opts & [s1 & sn :as sigs]]
   [conn-opts & sigs]
   `(let [tag# ~(:tag (meta &form))
-         [pool# conn#] (binding [taoensso.carmine.connections/*tag* tag#]
-                         (conns/pooled-conn ~conn-opts))
+         new-connection?# (not *wcar-connection*)
+         [pool# conn# :as pool-conn#] (binding [taoensso.carmine.connections/*tag* tag#]
+                                        (or *wcar-connection* (conns/pooled-conn ~conn-opts)))
 
          ;; To support `wcar` nesting with req planning, we mimic
          ;; `with-replies` stashing logic here to simulate immediate writes:
          ?stashed-replies#
          (when protocol/*context*
            (protocol/execute-requests :get-replies :as-pipeline))]
-     (try
-       (let [response# (protocol/with-context conn#
-                         (protocol/with-replies ~@sigs))]
-         (binding [taoensso.carmine.connections/*tag* tag#]
-           (conns/release-conn pool# conn#))
-         response#)
+     (binding [*wcar-connection* pool-conn#]
+       (try
+         (let [response# (protocol/with-context conn#
+                           (protocol/with-replies ~@sigs))]
+           (binding [taoensso.carmine.connections/*tag* tag#]
+             (when new-connection?#
+               (conns/release-conn pool# conn#)))
+           response#)
 
-       (catch Throwable t#    ; nb Throwable to catch assertions, etc.
-         (binding [taoensso.carmine.connections/*tag* tag#]
-           (conns/release-conn pool# conn# t#))
-         (throw t#))
+         (catch Throwable t#    ; nb Throwable to catch assertions, etc.
+           (when new-connection?#
+             (binding [taoensso.carmine.connections/*tag* tag#]
+               (conns/release-conn pool# conn# t#)))
+           (throw t#))
 
-       ;; Restore any stashed replies to preexisting context:
-       (finally
-         (when ?stashed-replies#
-           (parse nil ; Already parsed on stashing
-             (encore/backport-run! return ?stashed-replies#)))))))
+         ;; Restore any stashed replies to preexisting context:
+         (finally
+           (when ?stashed-replies#
+             (parse nil ; Already parsed on stashing
+                    (encore/backport-run! return ?stashed-replies#))))))))
 
 (comment
   (wcar {} (ping) "not-a-Redis-command" (ping))
