@@ -48,22 +48,26 @@
   {:arglists '([conn-opts :as-pipeline & body] [conn-opts & body])}
   ;; [conn-opts & [s1 & sn :as sigs]]
   [conn-opts & sigs]
-  `(let [[pool# conn#] (conns/pooled-conn ~conn-opts)
+  `(let [tag# ~(:tag (meta &form))
+         [pool# conn#] (binding [taoensso.carmine.connections/*tag* tag#]
+                         (conns/pooled-conn ~conn-opts))
 
          ;; To support `wcar` nesting with req planning, we mimic
          ;; `with-replies` stashing logic here to simulate immediate writes:
          ?stashed-replies#
          (when protocol/*context*
            (protocol/execute-requests :get-replies :as-pipeline))]
-
      (try
        (let [response# (protocol/with-context conn#
                          (protocol/with-replies ~@sigs))]
-         (conns/release-conn pool# conn#)
+         (binding [taoensso.carmine.connections/*tag* tag#]
+           (conns/release-conn pool# conn#))
          response#)
 
-       (catch Throwable t# ; nb Throwable to catch assertions, etc.
-         (conns/release-conn pool# conn# t#) (throw t#))
+       (catch Throwable t#    ; nb Throwable to catch assertions, etc.
+         (binding [taoensso.carmine.connections/*tag* tag#]
+           (conns/release-conn pool# conn# t#))
+         (throw t#))
 
        ;; Restore any stashed replies to preexisting context:
        (finally
@@ -353,6 +357,7 @@
          max-idx#    ~max-cas-attempts
          prelude-result# (atom nil)
          exec-result#
+         ^{:tag :atomic-outer}
          (wcar conn-opts# ; Hold 1 conn for all attempts
            (loop [idx# 1]
              (try (reset! prelude-result#

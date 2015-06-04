@@ -191,6 +191,7 @@
                  (car/atomic conn-opts 100
                    (car/watch (qk :requeue))
                    (let [requeue?
+                         ^{:tag :handle1}
                          (wcar conn-opts (->> (car/sismember (qk :requeue) mid)
                                               (car/parse-bool)))
                          status (if (and (= status :success) requeue?)
@@ -251,6 +252,7 @@
                   (let [?error
                         (try
                           (let [[poll-reply ndruns mid-circle-size]
+                                ^{:tag :start-polling-loop-1}
                                 (wcar conn-opts
                                   (dequeue qname opts)
                                   (car/get  (qk :ndry-runs))
@@ -263,7 +265,8 @@
 
                             (if (= poll-reply "eoq-backoff")
                               (Thread/sleep
-                               (max (wcar conn-opts (car/pttl (qk :eoq-backoff?)))
+                               (max ^{:tag :start-polling-loop-2}
+                                (wcar conn-opts (car/pttl (qk :eoq-backoff?)))
                                     10))
                               (handle1 conn-opts qname handler poll-reply))
 

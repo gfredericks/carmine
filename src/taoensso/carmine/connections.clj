@@ -42,11 +42,21 @@
   (get-conn     [this spec])
   (release-conn [this conn] [this conn exception]))
 
+(def ^:dynamic *tag* nil)
+(defn pst [] (when-not *tag*
+               (-> (Exception.) (.getStackTrace) (->> (take 10) (clojure.pprint/pprint)))))
+
 (defrecord ConnectionPool [^GenericKeyedObjectPool pool]
   IConnectionPool
-  (get-conn     [_ spec] (.borrowObject pool spec))
-  (release-conn [_ conn] (.returnObject pool (:spec conn) conn))
-  (release-conn [_ conn exception] (.invalidateObject pool (:spec conn) conn))
+  (get-conn     [_ spec]
+    (println "BORROW" *tag*) (pst)
+    (.borrowObject pool spec))
+  (release-conn [_ conn]
+    (println "RETURN" *tag*) (pst)
+    (.returnObject pool (:spec conn) conn))
+  (release-conn [_ conn exception]
+    (println "INVALIDATE" *tag*) (pst)
+    (.invalidateObject pool (:spec conn) conn))
   java.io.Closeable
   (close [_] (.close pool)))
 
